@@ -20,12 +20,7 @@
             margin: 0; padding: 20px;
         }
         .header { text-align: center; margin-bottom: 30px; }
-        .author { 
-            font-size: 1.1rem; 
-            color: var(--accent-green); 
-            margin-top: 5px;
-            font-weight: bold;
-        }
+        .author { font-size: 1.1rem; color: var(--accent-green); margin-top: 5px; font-weight: bold; }
         .dashboard-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
@@ -37,8 +32,9 @@
             border-radius: 15px;
             padding: 20px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            min-height: 400px;
         }
-        .loading { text-align: center; font-size: 1.2rem; color: var(--accent-blue); }
+        .loading { text-align: center; font-size: 1.2rem; color: var(--accent-blue); padding: 50px; }
     </style>
 </head>
 <body>
@@ -46,7 +42,7 @@
 <div class="header">
     <h1>충청북도 기상 데이터 대시보드</h1>
     <div class="author">작성자: 1202 유서진</div>
-    <p>공공데이터 포털 API 연동 (ASOS 일자료)</p>
+    <p>공공데이터 포털 API 연동</p>
 </div>
 
 <div id="loader" class="loading">데이터를 불러오는 중...</div>
@@ -58,15 +54,24 @@
 </div>
 
 <script>
-    // 제공해주신 일반 인증키를 적용했습니다.
+    // 1. 인증키 (Decoding된 키가 안 되면 Encoding된 키를 넣어보세요)
     const API_KEY = "9aeb4132fb09a2571a255a72b641bf08fc287c3db0865fb83b302ec94ec457f3"; 
-    const ENDPOINT = "uddi:f052ed65-fd7a-4668-b7a5-f4bae187d58c_201810192136"; 
-    const URL = `https://api.odcloud.kr/api/15029361/v1/${ENDPOINT}?page=1&perPage=50&serviceKey=${API_KEY}`;
+    
+    // 2. 404 에러 방지를 위해 URL 구조를 표준 방식으로 정리
+    const BASE_URL = "https://api.odcloud.kr/api/15029361/v1/uddi:f052ed65-fd7a-4668-b7a5-f4bae187d58c_201810192136";
+    const FULL_URL = `${BASE_URL}?page=1&perPage=50&serviceKey=${API_KEY}`;
 
     async function fetchData() {
         try {
-            const response = await fetch(URL);
-            if (!response.ok) throw new Error("네트워크 응답 에러");
+            console.log("요청 URL:", FULL_URL); // 브라우저 콘솔(F12)에서 확인 가능
+            const response = await fetch(FULL_URL);
+            
+            if (response.status === 404) {
+                throw new Error("404 에러: API 경로를 찾을 수 없습니다. (엔드포인트 주소 확인 필요)");
+            } else if (response.status === 401) {
+                throw new Error("401 에러: 인증키가 유효하지 않습니다.");
+            }
+
             const json = await response.json();
             
             if (json.data && json.data.length > 0) {
@@ -74,16 +79,60 @@
                 document.getElementById('loader').style.display = 'none';
                 document.getElementById('dashboard').style.display = 'grid';
             } else {
-                throw new Error("데이터가 비어있습니다.");
+                throw new Error("데이터는 성공적으로 불러왔으나 내용이 비어있습니다.");
             }
         } catch (error) {
-            console.error("API 호출 실패:", error);
-            document.getElementById('loader').innerText = "데이터 로딩 실패 (인증키 활성화 대기 중이거나 키가 올바르지 않습니다)";
-            document.getElementById('loader').style.color = "#ef476f";
+            console.error("상세 에러:", error);
+            document.getElementById('loader').innerHTML = `
+                <div style="color: #ef476f;">
+                    <h3>로딩 실패</h3>
+                    <p>${error.message}</p>
+                    <small>공공데이터 포털에서 '활용신청'이 승인되었는지 확인하세요.</small>
+                </div>
+            `;
         }
     }
 
     function renderDashboard(data) {
-        const dates = data.map(d => d["일시"]);
-        const avgTemp = data.map(d => parseFloat(d["평균기온(°C)"]));
-        const maxTemp = data.map(d => parseFloat(d["최고
+        // 데이터 필드명이 API 실제 결과와 일치하는지 확인이 필요합니다.
+        // 일반적인 ASOS 데이터 필드명 기준입니다.
+        const dates = data.map(d => d["일시"] || d["DATE"]);
+        const avgTemp = data.map(d => parseFloat(d["평균기온(°C)"] || 0));
+        const maxTemp = data.map(d => parseFloat(d["최고기온(°C)"] || 0));
+        const minTemp = data.map(d => parseFloat(d["최저기온(°C)"] || 0));
+        const rains = data.map(d => parseFloat(d["일강수량(mm)"] || 0));
+        const hums = data.map(d => parseFloat(d["평균습도(%rh)"] || 0));
+        const winds = data.map(d => parseFloat(d["평균풍속(m/s)"] || 0));
+
+        const layoutBase = {
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: '#e0e1dd' },
+            xaxis: { gridcolor: '#415a77' },
+            yaxis: { gridcolor: '#415a77' }
+        };
+
+        Plotly.newPlot('temp-chart', [
+            { x: dates, y: maxTemp, name: '최고', type: 'scatter', line: {color: '#ef476f'} },
+            { x: dates, y: avgTemp, name: '평균', type: 'scatter', line: {color: '#00b4d8', width: 4} },
+            { x: dates, y: minTemp, name: '최저', type: 'scatter', line: {color: '#06d6a0'} }
+        ], { ...layoutBase, title: '기온 변화 (°C)' });
+
+        Plotly.newPlot('rain-chart', [
+            { x: dates, y: rains, type: 'bar', marker: {color: '#118ab2'}, name: '강수량' }
+        ], { ...layoutBase, title: '일강수량 (mm)' });
+
+        Plotly.newPlot('hum-wind-chart', [
+            { x: dates, y: hums, name: '습도 (%)', type: 'scatter', fill: 'tozeroy' },
+            { x: dates, y: winds, name: '풍속 (m/s)', yaxis: 'y2', type: 'scatter', line: {color: '#ffd166'} }
+        ], { 
+            ...layoutBase, 
+            title: '습도 및 풍속 추이',
+            yaxis2: { title: '풍속', overlaying: 'y', side: 'right', showgrid: false }
+        });
+    }
+
+    fetchData();
+</script>
+</body>
+</html>
